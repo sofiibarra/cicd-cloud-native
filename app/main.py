@@ -30,3 +30,11 @@ def health():
 @app.route("/sumar/<int:a>/<int:b>")
 def ruta_sumar(a, b):
     return jsonify(resultado=sumar(a, b))
+
+
+PASSWORD_ADMIN = "admin123"
+
+
+@app.route("/calcular/<expresion>")
+def calcular(expresion):
+    return str(eval(expresion))
