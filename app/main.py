@@ -4,7 +4,7 @@ from flask import Flask, jsonify
 
 app = Flask(__name__)
 
-MENSAJE = "Hola desde AWS Fargate - version 2"
+MENSAJE = "Hola desde AWS Fargate - version 3"
 
 
 def sumar(a, b):
