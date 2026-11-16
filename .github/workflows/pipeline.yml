@@ -1,0 +1,119 @@
+name: CI/CD Cloud Native
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REPOSITORY: cicd-demo
+  STACK_NAME: cicd-demo-app
+
+jobs:
+  # ---------- Etapa 1: pruebas automatizadas ----------
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Descargar el codigo
+        uses: actions/checkout@v4
+
+      - name: Instalar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar dependencias
+        run: pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Correr tests
+        run: pytest -v
+
+  # ---------- Etapa 2: controles de seguridad ----------
+  security:
+    name: security
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Descargar el codigo (con historial)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Instalar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar herramientas
+        run: pip install -r requirements-dev.txt
+
+      - name: SAST - Bandit (analiza nuestro codigo)
+        run: bandit -r app
+
+      - name: SCA - pip-audit (analiza las dependencias)
+        run: pip-audit -r requirements.txt
+
+      - name: Secretos - Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ---------- Etapa 3: build, push y deploy (solo en main) ----------
+  deploy:
+    name: deploy
+    needs: [test, security]
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Descargar el codigo
+        uses: actions/checkout@v4
+
+      - name: Login en AWS con OIDC (credenciales temporales)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login en ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Construir y subir la imagen Docker
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+        run: |
+          IMAGE="$REGISTRY/$ECR_REPOSITORY:$GITHUB_SHA"
+          docker build -t "$IMAGE" .
+          docker push "$IMAGE"
+          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+
+      - name: Crear o actualizar la infraestructura (CloudFormation)
+        run: |
+          aws cloudformation deploy \
+            --stack-name "$STACK_NAME" \
+            --template-file infra/app.yml \
+            --role-arn "${{ vars.CFN_EXEC_ROLE_ARN }}" \
+            --parameter-overrides \
+              ImageUri="$IMAGE" \
+              TaskExecutionRoleArn="${{ vars.TASK_EXEC_ROLE_ARN }}" \
+              AppVersion="${GITHUB_SHA::7}" \
+            --no-fail-on-empty-changeset
+
+      - name: Mostrar la URL de la app
+        run: |
+          URL=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" \
+            --query "Stacks[0].Outputs[?OutputKey=='AppUrl'].OutputValue" --output text)
+          echo "App desplegada en: $URL"
+          echo "### App desplegada: $URL" >> "$GITHUB_STEP_SUMMARY"
