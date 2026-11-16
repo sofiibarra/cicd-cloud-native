@@ -14,6 +14,14 @@ Parameters:
     Type: String
     Default: cicd-demo
     Description: Nombre del repositorio de imagenes en ECR
+  GitHubOwnerId:
+    Type: String
+    Default: "*"
+    Description: ID numerico del usuario de GitHub (GitHub lo incluye en el token OIDC)
+  GitHubRepoId:
+    Type: String
+    Default: "*"
+    Description: ID numerico del repositorio de GitHub
   CreateOIDCProvider:
     Type: String
     Default: "true"
@@ -127,7 +135,11 @@ Resources:
               StringEquals:
                 token.actions.githubusercontent.com:aud: sts.amazonaws.com
               StringLike:
-                token.actions.githubusercontent.com:sub: !Sub repo:${GitHubOwner}/${GitHubRepo}:*
+                token.actions.githubusercontent.com:sub:
+                  # Formato clasico del token de GitHub
+                  - !Sub repo:${GitHubOwner}/${GitHubRepo}:*
+                  # Formato nuevo: incluye los ID numericos del usuario y del repo
+                  - !Sub repo:${GitHubOwner}@${GitHubOwnerId}/${GitHubRepo}@${GitHubRepoId}:*
       Policies:
         - PolicyName: pipeline
           PolicyDocument:
